@@ -25,5 +25,4 @@ struct NodePrefs {  // persisted to file
   uint32_t ble_pin;
   uint8_t  advert_loc_policy;
   uint8_t  buzzer_quiet;
-  uint8_t  pad[2]; // Explicit padding for 4-byte alignment
 };
