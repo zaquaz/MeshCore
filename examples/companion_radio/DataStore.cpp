@@ -200,7 +200,13 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
   File file = openRead(_fs, filename);
   if (file) {
     uint8_t pad[8];
+    
+    // Initialize defaults for any missing fields (backward compatibility)
+    memset(&_prefs, 0, sizeof(_prefs));
+    node_lat = 0.0;
+    node_lon = 0.0;
 
+    // Read fields sequentially, file.read() handles EOF gracefully
     file.read((uint8_t *)&_prefs.airtime_factor, sizeof(float));                           // 0
     file.read((uint8_t *)_prefs.node_name, sizeof(_prefs.node_name));                      // 4
     file.read(pad, 4);                                                                     // 36

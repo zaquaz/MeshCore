@@ -8,7 +8,7 @@
 #define FIRMWARE_VER_CODE 8
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "17 Nov 2025"
+#define FIRMWARE_BUILD_DATE "13 Nov 2024"
 #endif
 
 #ifndef FIRMWARE_VERSION
@@ -176,7 +176,6 @@ private:
   void checkCLIRescueCmd();
   void checkSerialInterface();
 
-private:
   DataStore* _store;
   NodePrefs _prefs;
   uint32_t pending_login;

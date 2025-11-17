@@ -873,7 +873,6 @@ void UITask::toggleBuzzer() {
       showAlert("Buzzer: OFF", 800);
     }
     _node_prefs->buzzer_quiet = buzzer.isQuiet();
-    extern MyMesh the_mesh;
     the_mesh.savePrefs();
     _next_refresh = 0;  // trigger refresh
   #endif

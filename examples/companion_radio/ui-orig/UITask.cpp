@@ -396,7 +396,6 @@ void UITask::handleButtonTriplePress() {
       sprintf(_alert, "Buzzer: OFF");
     }
     _node_prefs->buzzer_quiet = buzzer.isQuiet();
-    extern MyMesh the_mesh;
     the_mesh.savePrefs();
     _need_refresh = true;
   #endif
