@@ -249,5 +249,11 @@ public:
       strcpy(reply, "> power management not available");
     }
   }
+
+  void resetPowerStats() override {
+    if (_power_manager) {
+      _power_manager->resetStats();
+    }
+  }
 };
 

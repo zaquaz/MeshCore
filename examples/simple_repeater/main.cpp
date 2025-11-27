@@ -130,32 +130,8 @@ void loop() {
     // Record TX activity (response will be sent)
     power_manager.recordActivity(ACTIVITY_SERIAL_TX);
     
-    // Check for power management commands
     char reply[160];
-    if (strncmp(command, "power", 5) == 0) {
-      // Built-in power management command
-      NodePrefs* prefs = the_mesh.getNodePrefs();
-      if (strcmp(command, "power") == 0 || strcmp(command, "power status") == 0) {
-        power_manager.formatStatsReply(reply);
-      } else if (strcmp(command, "power on") == 0) {
-        power_manager.setPowerSavingEnabled(true);
-        prefs->power_saving_enabled = 1;
-        the_mesh.savePrefs();
-        strcpy(reply, "power saving enabled (saved)");
-      } else if (strcmp(command, "power off") == 0) {
-        power_manager.setPowerSavingEnabled(false);
-        prefs->power_saving_enabled = 0;
-        the_mesh.savePrefs();
-        strcpy(reply, "power saving disabled (saved)");
-      } else if (strcmp(command, "power reset") == 0) {
-        power_manager.resetStats();
-        strcpy(reply, "power stats reset");
-      } else {
-        strcpy(reply, "usage: power [on|off|status|reset]");
-      }
-    } else {
-      the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
-    }
+    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
     
     if (reply[0]) {
       Serial.print("  -> "); Serial.println(reply);

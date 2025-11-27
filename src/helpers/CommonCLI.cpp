@@ -545,8 +545,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           _callbacks->setPowerSavingEnabled(false);
           savePrefs();
           strcpy(reply, "OK - power saving disabled");
+        } else if (memcmp(val, "reset", 5) == 0) {
+          _callbacks->resetPowerStats();
+          strcpy(reply, "OK - power stats reset");
         } else {
-          strcpy(reply, "Error: use 'set power on' or 'set power off'");
+          strcpy(reply, "Error: use 'set power on|off|reset'");
         }
       } else {
         sprintf(reply, "unknown config: %s", config);

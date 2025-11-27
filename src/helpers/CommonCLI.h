@@ -96,6 +96,10 @@ public:
   virtual void formatPowerStatsReply(char *reply) {
     strcpy(reply, "power management not available");
   };
+
+  virtual void resetPowerStats() {
+    // no op by default - override in implementations that support power management
+  };
 };
 
 class CommonCLI {
