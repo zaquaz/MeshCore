@@ -81,8 +81,18 @@ void setup() {
 
   the_mesh.begin(fs);
 
-  // Initialize power manager - will track activity to optimize power consumption
+  // Initialize power manager and wire it up to the mesh for remote commands
   power_manager.begin();
+  the_mesh.setPowerManager(&power_manager);
+  
+  // Restore power saving state from persistent preferences
+  NodePrefs* prefs = the_mesh.getNodePrefs();
+  if (prefs->power_saving_enabled) {
+    power_manager.setPowerSavingEnabled(true);
+    MESH_DEBUG_PRINTLN("Power saving: enabled (from prefs)");
+  } else {
+    MESH_DEBUG_PRINTLN("Power saving: disabled");
+  }
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
@@ -124,14 +134,19 @@ void loop() {
     char reply[160];
     if (strncmp(command, "power", 5) == 0) {
       // Built-in power management command
+      NodePrefs* prefs = the_mesh.getNodePrefs();
       if (strcmp(command, "power") == 0 || strcmp(command, "power status") == 0) {
         power_manager.formatStatsReply(reply);
       } else if (strcmp(command, "power on") == 0) {
         power_manager.setPowerSavingEnabled(true);
-        strcpy(reply, "power saving enabled");
+        prefs->power_saving_enabled = 1;
+        the_mesh.savePrefs();
+        strcpy(reply, "power saving enabled (saved)");
       } else if (strcmp(command, "power off") == 0) {
         power_manager.setPowerSavingEnabled(false);
-        strcpy(reply, "power saving disabled");
+        prefs->power_saving_enabled = 0;
+        the_mesh.savePrefs();
+        strcpy(reply, "power saving disabled (saved)");
       } else if (strcmp(command, "power reset") == 0) {
         power_manager.resetStats();
         strcpy(reply, "power stats reset");

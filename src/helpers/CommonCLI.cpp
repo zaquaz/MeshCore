@@ -331,6 +331,13 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       } else if (memcmp(config, "bridge.secret", 13) == 0) {
         sprintf(reply, "> %s", _prefs->bridge_secret);
 #endif
+      } else if (memcmp(config, "power", 5) == 0) {
+        if (config[5] == 0 || config[5] == ' ') {
+          // "get power" - return current state and stats
+          _callbacks->formatPowerStatsReply(reply);
+        } else {
+          sprintf(reply, "??: %s", config);
+        }
       } else {
         sprintf(reply, "??: %s", config);
       }
@@ -523,6 +530,21 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         savePrefs();
         strcpy(reply, "OK");
 #endif
+      } else if (memcmp(config, "power ", 6) == 0) {
+        const char* val = &config[6];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->power_saving_enabled = 1;
+          _callbacks->setPowerSavingEnabled(true);
+          savePrefs();
+          strcpy(reply, "OK - power saving enabled");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->power_saving_enabled = 0;
+          _callbacks->setPowerSavingEnabled(false);
+          savePrefs();
+          strcpy(reply, "OK - power saving disabled");
+        } else {
+          strcpy(reply, "Error: use 'set power on' or 'set power off'");
+        }
       } else {
         sprintf(reply, "unknown config: %s", config);
       }

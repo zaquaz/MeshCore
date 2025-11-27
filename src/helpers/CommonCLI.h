@@ -47,6 +47,8 @@ struct NodePrefs { // persisted to file
   uint32_t gps_interval; // in seconds
   uint8_t advert_loc_policy;
   uint32_t discovery_mod_timestamp;
+  // Power management settings
+  uint8_t power_saving_enabled; // boolean - enable/disable power saving mode
 };
 
 class CommonCLICallbacks {
@@ -81,6 +83,18 @@ public:
 
   virtual void restartBridge() {
     // no op by default
+  };
+
+  virtual void setPowerSavingEnabled(bool enable) {
+    // no op by default - override in implementations that support power management
+  };
+
+  virtual bool getPowerSavingEnabled() {
+    return false;  // default to disabled
+  };
+
+  virtual void formatPowerStatsReply(char *reply) {
+    strcpy(reply, "power management not available");
   };
 };
 

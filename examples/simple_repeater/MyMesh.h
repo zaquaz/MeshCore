@@ -28,6 +28,7 @@
 #include <helpers/ClientACL.h>
 #include <helpers/CommonCLI.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/PowerManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/StatsFormatHelper.h>
@@ -96,6 +97,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   RateLimiter discover_limiter;
   bool region_load_active;
   unsigned long dirty_contacts_expiry;
+  PowerManager* _power_manager;  // optional - for power management callbacks
 #if MAX_NEIGHBOURS
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -166,6 +168,9 @@ public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
   void begin(FILESYSTEM* fs);
+  
+  // Set the power manager for remote power commands
+  void setPowerManager(PowerManager* pm) { _power_manager = pm; }
 
   const char* getFirmwareVer() override { return FIRMWARE_VERSION; }
   const char* getBuildDate() override { return FIRMWARE_BUILD_DATE; }
@@ -225,4 +230,24 @@ public:
     bridge.begin();
   }
 #endif
+
+  // Power management callbacks (for remote LoRa commands)
+  void setPowerSavingEnabled(bool enable) override {
+    if (_power_manager) {
+      _power_manager->setPowerSavingEnabled(enable);
+    }
+  }
+
+  bool getPowerSavingEnabled() override {
+    return _power_manager ? _power_manager->isPowerSavingEnabled() : false;
+  }
+
+  void formatPowerStatsReply(char *reply) override {
+    if (_power_manager) {
+      _power_manager->formatStatsReply(reply);
+    } else {
+      strcpy(reply, "> power management not available");
+    }
+  }
 };
+
