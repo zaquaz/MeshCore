@@ -85,6 +85,11 @@ void setup() {
   power_manager.begin();
   the_mesh.setPowerManager(&power_manager);
   
+  // Set callback to check for pending outbound packets before sleeping
+  power_manager.setHasPendingOutboundCallback([]() -> bool {
+    return the_mesh.hasPendingOutbound();
+  });
+  
   // Restore power saving state from persistent preferences
   NodePrefs* prefs = the_mesh.getNodePrefs();
   if (prefs->power_saving_enabled) {

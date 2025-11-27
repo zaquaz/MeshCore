@@ -255,5 +255,10 @@ public:
       _power_manager->resetStats();
     }
   }
-};
 
+  // Check if there are packets waiting to be transmitted
+  // Used by PowerManager to avoid sleeping when TX is pending
+  bool hasPendingOutbound() {
+    return _mgr->getOutboundCount(millis()) > 0;
+  }
+};

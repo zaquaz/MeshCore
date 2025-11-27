@@ -61,6 +61,9 @@
 #define CPU_FREQ_ACTIVE        160   // MHz - active mode (good balance)
 #define CPU_FREQ_BOOST         240   // MHz - crypto/OTA operations
 
+// Callback type for checking if there are pending outbound packets
+typedef bool (*HasPendingOutboundFn)();
+
 class PowerManager {
 private:
     unsigned long _last_serial_activity;
@@ -69,6 +72,9 @@ private:
     uint8_t _current_mode;
     bool _power_saving_enabled;
     bool _serial_connected_override;  // Force assume serial connected (for debugging)
+    
+    // Callback to check for pending TX packets before sleeping
+    HasPendingOutboundFn _has_pending_outbound;
     
     // CPU frequency scaling (ESP32)
     bool _cpu_scaling_enabled;
@@ -79,6 +85,7 @@ private:
     uint32_t _idle_loops;
     uint32_t _active_loops;
     uint32_t _sleep_count;
+    uint32_t _sleep_skipped_tx;       // Times sleep was skipped due to pending TX
     uint32_t _cpu_scale_count;        // Number of CPU frequency changes
     
 public:
@@ -89,12 +96,14 @@ public:
         _current_mode = POWER_MODE_ACTIVE;
         _power_saving_enabled = true;
         _serial_connected_override = false;
+        _has_pending_outbound = nullptr;
         _cpu_scaling_enabled = true;
         _current_cpu_freq = CPU_FREQ_ACTIVE;
         _cpu_boost_until = 0;
         _idle_loops = 0;
         _active_loops = 0;
         _sleep_count = 0;
+        _sleep_skipped_tx = 0;
         _cpu_scale_count = 0;
     }
     
@@ -390,11 +399,20 @@ public:
     }
     
     /**
+     * Set callback to check for pending outbound packets
+     * If set, sleep will be skipped when packets are waiting to transmit
+     */
+    void setHasPendingOutboundCallback(HasPendingOutboundFn callback) {
+        _has_pending_outbound = callback;
+    }
+    
+    /**
      * Get statistics
      */
     uint32_t getIdleLoops() const { return _idle_loops; }
     uint32_t getActiveLoops() const { return _active_loops; }
     uint32_t getSleepCount() const { return _sleep_count; }
+    uint32_t getSleepSkippedTx() const { return _sleep_skipped_tx; }
     uint32_t getCpuScaleCount() const { return _cpu_scale_count; }
     
     /**
@@ -404,6 +422,7 @@ public:
         _idle_loops = 0;
         _active_loops = 0;
         _sleep_count = 0;
+        _sleep_skipped_tx = 0;
         _cpu_scale_count = 0;
     }
     
@@ -412,7 +431,7 @@ public:
      */
     void formatStatsReply(char* reply) const {
 #ifdef ESP32
-        sprintf(reply, "mode=%s cpu=%uMHz serial=%s pwr=%s idle=%lu active=%lu scales=%lu sleeps=%lu", 
+        sprintf(reply, "mode=%s cpu=%uMHz serial=%s pwr=%s idle=%lu active=%lu scales=%lu sleeps=%lu skip_tx=%lu", 
                 getModeName(),
                 _current_cpu_freq,
                 isSerialActive() ? "yes" : "no",
@@ -420,15 +439,17 @@ public:
                 _idle_loops,
                 _active_loops,
                 _cpu_scale_count,
-                _sleep_count);
+                _sleep_count,
+                _sleep_skipped_tx);
 #else
-        sprintf(reply, "mode=%s serial=%s pwr=%s idle=%lu active=%lu sleeps=%lu", 
+        sprintf(reply, "mode=%s serial=%s pwr=%s idle=%lu active=%lu sleeps=%lu skip_tx=%lu", 
                 getModeName(),
                 isSerialActive() ? "yes" : "no",
                 _power_saving_enabled ? "on" : "off",
                 _idle_loops,
                 _active_loops,
-                _sleep_count);
+                _sleep_count,
+                _sleep_skipped_tx);
 #endif
     }
     
@@ -444,6 +465,12 @@ public:
      * @return true if entered sleep, false if sleep was skipped
      */
     bool enterLightSleep(uint32_t max_sleep_ms, int radio_dio_pin) {
+        // Don't sleep if there are packets waiting to transmit
+        if (_has_pending_outbound && _has_pending_outbound()) {
+            _sleep_skipped_tx++;
+            return false;
+        }
+        
         if (!canEnterLowPower()) return false;
         
         // Don't sleep if WiFi is active (OTA, companion radio WiFi mode, etc.)
@@ -494,6 +521,12 @@ public:
      * @return true if entered sleep, false if skipped (power saving disabled or serial active)
      */
     bool enterSystemOnSleep() {
+        // Don't sleep if there are packets waiting to transmit
+        if (_has_pending_outbound && _has_pending_outbound()) {
+            _sleep_skipped_tx++;
+            return false;
+        }
+        
         // Check if power saving allows sleep
         if (!_power_saving_enabled) return false;
         if (isSerialActive()) return false;
