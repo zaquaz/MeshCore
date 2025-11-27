@@ -510,7 +510,7 @@ public:
     /**
      * Enter System ON sleep (NRF52 only)
      * CPU halts until interrupt occurs, peripherals remain active
-     * Much lower power than busy loop (~3-5µA vs ~3mA)
+     * Lower power than busy loop as CPU is halted
      * 
      * The function uses sd_app_evt_wait() if SoftDevice is enabled,
      * otherwise falls back to WFE instruction.
