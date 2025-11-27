@@ -132,8 +132,11 @@ void loop() {
       } else if (strcmp(command, "power off") == 0) {
         power_manager.setPowerSavingEnabled(false);
         strcpy(reply, "power saving disabled");
+      } else if (strcmp(command, "power reset") == 0) {
+        power_manager.resetStats();
+        strcpy(reply, "power stats reset");
       } else {
-        strcpy(reply, "usage: power [on|off|status]");
+        strcpy(reply, "usage: power [on|off|status|reset]");
       }
     } else {
       the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
@@ -154,6 +157,12 @@ void loop() {
   rtc_clock.tick();
   
   // Apply power-efficient delay based on activity level
-  // When idle and no serial activity, this allows CPU to enter low-power states
-  power_manager.applyLoopDelay();
+  // On NRF52: Uses System ON sleep in LOW_POWER mode (wakes on radio interrupt)
+  // On ESP32: Uses delay() which allows FreeRTOS idle (light sleep requires DIO pin config)
+  // When serial is active (e.g., connected to Raspberry Pi), stays in ACTIVE mode
+#ifdef NRF52_PLATFORM
+  power_manager.applyPowerSaving();  // Uses System ON sleep on NRF52
+#else
+  power_manager.applyLoopDelay();    // Conservative delay-based on other platforms
+#endif
 }

@@ -2,6 +2,12 @@
 
 #include <Arduino.h>
 
+// NRF52 SoftDevice includes for sleep functions
+#ifdef NRF52_PLATFORM
+  #include <nrf_sdm.h>
+  #include <nrf_soc.h>
+#endif
+
 /**
  * PowerManager - Centralized power management for MeshCore devices
  * 
@@ -9,6 +15,7 @@
  * - Detects serial/USB activity to prevent sleep when connected to host (e.g., Raspberry Pi)
  * - Adaptive loop delays based on activity level
  * - Dynamic CPU frequency scaling (ESP32) - 80MHz idle, 160MHz active
+ * - NRF52 System ON sleep with SoftDevice integration
  * - Optional light sleep support (ESP32) with interrupt wake
  * - Safe defaults - power saving only when safe to do so
  * 
@@ -179,17 +186,44 @@ public:
     }
     
     /**
-     * Apply loop delay based on current power mode
+     * Apply loop delay based on current power mode (conservative - delay only)
      * Call at end of main loop
      */
     void applyLoopDelay() {
         uint8_t delay_ms = getLoopDelayMs();
         if (delay_ms > 0) {
             _idle_loops++;
-            delay(delay_ms);  // This allows FreeRTOS to do power management
+            delay(delay_ms);  // This allows FreeRTOS/RTOS to do power management
         } else {
             _active_loops++;
         }
+    }
+    
+    /**
+     * Apply power saving based on current mode (aggressive - uses actual sleep)
+     * In LOW_POWER mode, this will enter actual CPU sleep (ESP32 light sleep / NRF52 System ON)
+     * Call at end of main loop instead of applyLoopDelay() for maximum power savings
+     * 
+     * @param radio_dio_pin GPIO pin for radio DIO1 interrupt wake (ESP32 only, -1 to disable)
+     * @param max_sleep_ms Maximum sleep time in ms (0 = wake on interrupt only)
+     */
+    void applyPowerSaving(int radio_dio_pin = -1, uint32_t max_sleep_ms = 100) {
+        if (_current_mode == POWER_MODE_LOW_POWER && _power_saving_enabled && !isSerialActive()) {
+            // Enter actual sleep mode
+#ifdef ESP32
+            if (radio_dio_pin >= 0) {
+                enterLightSleep(max_sleep_ms, radio_dio_pin);
+                return;
+            }
+#endif
+#ifdef NRF52_PLATFORM
+            enterSystemOnSleep();
+            return;
+#endif
+        }
+        
+        // Fall back to delay-based power saving
+        applyLoopDelay();
     }
     
     /**
@@ -371,22 +405,23 @@ public:
      */
     void formatStatsReply(char* reply) const {
 #ifdef ESP32
-        sprintf(reply, "mode=%s cpu=%uMHz serial=%s pwr=%s cpu_scale=%s idle=%lu active=%lu scales=%lu", 
+        sprintf(reply, "mode=%s cpu=%uMHz serial=%s pwr=%s idle=%lu active=%lu scales=%lu sleeps=%lu", 
                 getModeName(),
                 _current_cpu_freq,
                 isSerialActive() ? "yes" : "no",
                 _power_saving_enabled ? "on" : "off",
-                _cpu_scaling_enabled ? "on" : "off",
                 _idle_loops,
                 _active_loops,
-                _cpu_scale_count);
+                _cpu_scale_count,
+                _sleep_count);
 #else
-        sprintf(reply, "mode=%s serial=%s pwr_save=%s idle=%lu active=%lu", 
+        sprintf(reply, "mode=%s serial=%s pwr=%s idle=%lu active=%lu sleeps=%lu", 
                 getModeName(),
                 isSerialActive() ? "yes" : "no",
                 _power_saving_enabled ? "on" : "off",
                 _idle_loops,
-                _active_loops);
+                _active_loops,
+                _sleep_count);
 #endif
     }
     
@@ -431,18 +466,54 @@ public:
 
 #ifdef NRF52_PLATFORM
     /**
-     * Wait for event (NRF52 only)
-     * CPU halts until interrupt occurs
-     * Much lower power than busy loop
+     * Enter System ON sleep (NRF52 only)
+     * CPU halts until interrupt occurs, peripherals remain active
+     * Much lower power than busy loop (~3-5µA vs ~3mA)
+     * 
+     * The function uses sd_app_evt_wait() if SoftDevice is enabled,
+     * otherwise falls back to WFE instruction.
+     * 
+     * GPIO interrupts (like radio DIO1) will wake the CPU immediately.
+     * millis() continues to run via RTC peripheral.
+     * 
+     * @return true if entered sleep, false if skipped (power saving disabled or serial active)
      */
-    void waitForEvent() {
-        if (!canEnterLowPower()) return;
+    bool enterSystemOnSleep() {
+        // Check if power saving allows sleep
+        if (!_power_saving_enabled) return false;
+        if (isSerialActive()) return false;
         
         _sleep_count++;
-        __WFE();  // Wait For Event - ARM instruction
+        
+        // Check if SoftDevice is enabled
+        uint8_t sd_enabled = 0;
+        sd_softdevice_is_enabled(&sd_enabled);
+        
+        if (sd_enabled) {
+            // SoftDevice is active - use its wait function
+            // This properly integrates with BLE stack timing
+            sd_app_evt_wait();
+        } else {
+            // No SoftDevice - use direct WFE
+            // The SEV/WFE pattern clears any pending event flag first,
+            // ensuring we actually sleep and don't just fall through
+            __SEV();  // Set Event (ensures event register is set)
+            __WFE();  // Clear Event (clears the event we just set)
+            __WFE();  // Wait For Event (now actually sleeps)
+        }
         
         // Woke up - record activity
         recordActivity(ACTIVITY_RADIO_RX);
+        return true;
+    }
+    
+    /**
+     * Legacy function - calls enterSystemOnSleep()
+     * @deprecated Use enterSystemOnSleep() instead
+     */
+    void waitForEvent() {
+        enterSystemOnSleep();
     }
 #endif
 };
+

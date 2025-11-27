@@ -32,6 +32,10 @@ void ESPNowBridge::begin() {
   // Initialize WiFi in station mode
   WiFi.mode(WIFI_STA);
   
+  // Enable WiFi modem sleep for power saving
+  // ESP-NOW still works with modem sleep enabled - radio wakes for TX/RX
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  
   // Set wifi channel
   if (esp_wifi_set_channel(_prefs->bridge_channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
     BRIDGE_DEBUG_PRINTLN("Error setting WIFI channel to %d\n", _prefs->bridge_channel);
