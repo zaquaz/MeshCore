@@ -8,6 +8,7 @@
  * Features:
  * - Detects serial/USB activity to prevent sleep when connected to host (e.g., Raspberry Pi)
  * - Adaptive loop delays based on activity level
+ * - Dynamic CPU frequency scaling (ESP32) - 80MHz idle, 160MHz active
  * - Optional light sleep support (ESP32) with interrupt wake
  * - Safe defaults - power saving only when safe to do so
  * 
@@ -28,6 +29,7 @@
 #define ACTIVITY_RADIO_RX      (1 << 2)
 #define ACTIVITY_RADIO_TX      (1 << 3)
 #define ACTIVITY_USER_INPUT    (1 << 4)
+#define ACTIVITY_CRYPTO        (1 << 5)   // Key exchange, signature verification
 
 // Default timeouts (milliseconds)
 #define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
@@ -39,6 +41,12 @@
 #define IDLE_LOOP_DELAY_MS            5       // 5ms delay in idle
 #define LOW_POWER_LOOP_DELAY_MS       20      // 20ms delay in low power
 
+// CPU frequency settings (ESP32 only)
+// Radio/SPI work fine at 80MHz, crypto benefits from higher speed
+#define CPU_FREQ_LOW_POWER     80    // MHz - idle/low power mode
+#define CPU_FREQ_ACTIVE        160   // MHz - active mode (good balance)
+#define CPU_FREQ_BOOST         240   // MHz - crypto/OTA operations
+
 class PowerManager {
 private:
     unsigned long _last_serial_activity;
@@ -48,10 +56,16 @@ private:
     bool _power_saving_enabled;
     bool _serial_connected_override;  // Force assume serial connected (for debugging)
     
+    // CPU frequency scaling (ESP32)
+    bool _cpu_scaling_enabled;
+    uint16_t _current_cpu_freq;
+    uint32_t _cpu_boost_until;        // millis() timestamp when boost expires
+    
     // Statistics
     uint32_t _idle_loops;
     uint32_t _active_loops;
     uint32_t _sleep_count;
+    uint32_t _cpu_scale_count;        // Number of CPU frequency changes
     
 public:
     PowerManager() {
@@ -61,9 +75,13 @@ public:
         _current_mode = POWER_MODE_ACTIVE;
         _power_saving_enabled = true;
         _serial_connected_override = false;
+        _cpu_scaling_enabled = true;
+        _current_cpu_freq = CPU_FREQ_ACTIVE;
+        _cpu_boost_until = 0;
         _idle_loops = 0;
         _active_loops = 0;
         _sleep_count = 0;
+        _cpu_scale_count = 0;
     }
     
     /**
@@ -76,6 +94,11 @@ public:
         _last_radio_activity = now;
         _last_any_activity = now;
         _current_mode = POWER_MODE_ACTIVE;
+        
+#ifdef ESP32
+        // Initialize at active frequency
+        _current_cpu_freq = getCpuFrequencyMhz();
+#endif
     }
     
     /**
@@ -122,6 +145,7 @@ public:
     void updatePowerMode() {
         if (!_power_saving_enabled || isSerialActive()) {
             _current_mode = POWER_MODE_ACTIVE;
+            updateCpuFrequency();
             return;
         }
         
@@ -135,6 +159,8 @@ public:
         } else {
             _current_mode = POWER_MODE_LOW_POWER;
         }
+        
+        updateCpuFrequency();
     }
     
     /**
@@ -185,13 +211,129 @@ public:
         }
     }
     
+    // ==================== CPU Frequency Scaling (ESP32) ====================
+    
+#ifdef ESP32
+    /**
+     * Update CPU frequency based on current power mode
+     * Called automatically by updatePowerMode()
+     * 
+     * CPU scaling is gated behind BOTH _power_saving_enabled AND _cpu_scaling_enabled
+     */
+    void updateCpuFrequency() {
+        // CPU scaling requires both master power saving AND cpu scaling to be enabled
+        if (!_power_saving_enabled || !_cpu_scaling_enabled) {
+            // Ensure we're at active frequency when power saving is disabled
+            if (_current_cpu_freq != CPU_FREQ_ACTIVE) {
+                setCpuFrequencyMhz(CPU_FREQ_ACTIVE);
+                _current_cpu_freq = CPU_FREQ_ACTIVE;
+            }
+            return;
+        }
+        
+        unsigned long now = millis();
+        uint16_t target_freq;
+        
+        // Check if we're in a temporary boost period
+        if (_cpu_boost_until > 0 && now < _cpu_boost_until) {
+            target_freq = CPU_FREQ_BOOST;
+        } else {
+            _cpu_boost_until = 0;  // Clear expired boost
+            
+            // Select frequency based on power mode
+            switch (_current_mode) {
+                case POWER_MODE_LOW_POWER:
+                    target_freq = CPU_FREQ_LOW_POWER;
+                    break;
+                case POWER_MODE_IDLE:
+                    target_freq = CPU_FREQ_LOW_POWER;  // Also use low freq for idle
+                    break;
+                default:
+                    target_freq = CPU_FREQ_ACTIVE;
+                    break;
+            }
+        }
+        
+        // Only change if different
+        if (target_freq != _current_cpu_freq) {
+            setCpuFrequencyMhz(target_freq);
+            _current_cpu_freq = target_freq;
+            _cpu_scale_count++;
+        }
+    }
+    
+    /**
+     * Temporarily boost CPU to maximum frequency
+     * Use for crypto operations, OTA updates, or heavy processing
+     * 
+     * Note: Boost works even when power saving is enabled (it's an explicit request)
+     * but respects the _cpu_scaling_enabled flag
+     * 
+     * @param duration_ms How long to maintain boost (max 30 seconds)
+     */
+    void boostCpu(uint32_t duration_ms = 5000) {
+        if (!_cpu_scaling_enabled) return;
+        
+        // Cap at 30 seconds to prevent accidental permanent boost
+        if (duration_ms > 30000) duration_ms = 30000;
+        
+        _cpu_boost_until = millis() + duration_ms;
+        
+        // Apply immediately
+        if (_current_cpu_freq != CPU_FREQ_BOOST) {
+            setCpuFrequencyMhz(CPU_FREQ_BOOST);
+            _current_cpu_freq = CPU_FREQ_BOOST;
+            _cpu_scale_count++;
+        }
+    }
+    
+    /**
+     * Get current CPU frequency in MHz
+     */
+    uint16_t getCurrentCpuFreq() const {
+        return _current_cpu_freq;
+    }
+    
+#else
+    // Non-ESP32 platforms: stub implementations
+    void updateCpuFrequency() { }
+    void boostCpu(uint32_t duration_ms = 5000) { (void)duration_ms; }
+    uint16_t getCurrentCpuFreq() const { return 0; }
+#endif
+
+    /**
+     * Enable/disable CPU frequency scaling
+     */
+    void setCpuScalingEnabled(bool enabled) {
+        _cpu_scaling_enabled = enabled;
+#ifdef ESP32
+        if (!enabled) {
+            // Restore to default active frequency
+            setCpuFrequencyMhz(CPU_FREQ_ACTIVE);
+            _current_cpu_freq = CPU_FREQ_ACTIVE;
+        }
+#endif
+    }
+    
+    bool isCpuScalingEnabled() const {
+        return _cpu_scaling_enabled;
+    }
+    
     /**
      * Enable/disable power saving
+     * When disabled, CPU frequency is restored to active level
      */
     void setPowerSavingEnabled(bool enabled) {
         _power_saving_enabled = enabled;
         if (!enabled) {
             _current_mode = POWER_MODE_ACTIVE;
+#ifdef ESP32
+            // Restore CPU to active frequency when power saving is disabled
+            if (_current_cpu_freq != CPU_FREQ_ACTIVE) {
+                setCpuFrequencyMhz(CPU_FREQ_ACTIVE);
+                _current_cpu_freq = CPU_FREQ_ACTIVE;
+            }
+#endif
         }
     }
     
@@ -212,6 +354,7 @@ public:
     uint32_t getIdleLoops() const { return _idle_loops; }
     uint32_t getActiveLoops() const { return _active_loops; }
     uint32_t getSleepCount() const { return _sleep_count; }
+    uint32_t getCpuScaleCount() const { return _cpu_scale_count; }
     
     /**
      * Reset statistics
@@ -220,18 +363,31 @@ public:
         _idle_loops = 0;
         _active_loops = 0;
         _sleep_count = 0;
+        _cpu_scale_count = 0;
     }
     
     /**
      * Format power stats for CLI reply
      */
     void formatStatsReply(char* reply) const {
+#ifdef ESP32
+        sprintf(reply, "mode=%s cpu=%uMHz serial=%s pwr=%s cpu_scale=%s idle=%lu active=%lu scales=%lu", 
+                getModeName(),
+                _current_cpu_freq,
+                isSerialActive() ? "yes" : "no",
+                _power_saving_enabled ? "on" : "off",
+                _cpu_scaling_enabled ? "on" : "off",
+                _idle_loops,
+                _active_loops,
+                _cpu_scale_count);
+#else
         sprintf(reply, "mode=%s serial=%s pwr_save=%s idle=%lu active=%lu", 
                 getModeName(),
                 isSerialActive() ? "yes" : "no",
                 _power_saving_enabled ? "on" : "off",
                 _idle_loops,
                 _active_loops);
+#endif
     }
     
 #ifdef ESP32
