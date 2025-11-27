@@ -14,5 +14,3 @@ cmake-*
 .cache
 .ccls
 compile_commands.json
-plans/
-firmware/
