@@ -94,7 +94,7 @@ public:
         _last_radio_activity = 0;
         _last_any_activity = 0;
         _current_mode = POWER_MODE_ACTIVE;
-        _power_saving_enabled = true;
+        _power_saving_enabled = false;  // SAFE DEFAULT - must be explicitly enabled via prefs
         _serial_connected_override = false;
         _has_pending_outbound = nullptr;
         _cpu_scaling_enabled = true;

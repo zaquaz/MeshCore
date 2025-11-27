@@ -96,6 +96,7 @@ void setup() {
     power_manager.setPowerSavingEnabled(true);
     MESH_DEBUG_PRINTLN("Power saving: enabled (from prefs)");
   } else {
+    power_manager.setPowerSavingEnabled(false);
     MESH_DEBUG_PRINTLN("Power saving: disabled");
   }
 
