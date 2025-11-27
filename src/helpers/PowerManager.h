@@ -8,6 +8,12 @@
   #include <nrf_soc.h>
 #endif
 
+// ESP32 sleep and GPIO includes
+#ifdef ESP32
+  #include <esp_sleep.h>
+  #include <driver/gpio.h>
+#endif
+
 /**
  * PowerManager - Centralized power management for MeshCore devices
  * 

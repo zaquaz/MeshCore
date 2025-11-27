@@ -173,11 +173,13 @@ void loop() {
   
   // Apply power-efficient delay based on activity level
   // On NRF52: Uses System ON sleep in LOW_POWER mode (wakes on radio interrupt)
-  // On ESP32: Uses delay() which allows FreeRTOS idle (light sleep requires DIO pin config)
+  // On ESP32: Uses light sleep with GPIO wake on radio DIO1 interrupt
   // When serial is active (e.g., connected to Raspberry Pi), stays in ACTIVE mode
 #ifdef NRF52_PLATFORM
   power_manager.applyPowerSaving();  // Uses System ON sleep on NRF52
+#elif defined(ESP32) && defined(P_LORA_DIO_1)
+  power_manager.applyPowerSaving(P_LORA_DIO_1, 100);  // Light sleep with radio wake, max 100ms
 #else
-  power_manager.applyLoopDelay();    // Conservative delay-based on other platforms
+  power_manager.applyLoopDelay();    // Conservative delay-based fallback
 #endif
 }
