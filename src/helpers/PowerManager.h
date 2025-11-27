@@ -12,6 +12,7 @@
 #ifdef ESP32
   #include <esp_sleep.h>
   #include <driver/gpio.h>
+  #include <WiFi.h>
 #endif
 
 /**
@@ -434,10 +435,9 @@ public:
 #ifdef ESP32
     /**
      * Enter light sleep (ESP32 only)
-     * Wakes on: radio DIO interrupt, timer, or serial RX
+     * Wakes on: radio DIO interrupt, timer
      * 
-     * NOTE: Only call this when canEnterLowPower() returns true
-     * and there are no pending TX operations
+     * NOTE: Will NOT sleep if WiFi is active (e.g., OTA mode, WiFi companion radio)
      * 
      * @param max_sleep_ms Maximum time to sleep (0 = wake on interrupt only)
      * @param radio_dio_pin GPIO pin for radio DIO1 interrupt wake
@@ -446,13 +446,22 @@ public:
     bool enterLightSleep(uint32_t max_sleep_ms, int radio_dio_pin) {
         if (!canEnterLowPower()) return false;
         
-        // Configure wake sources
-        esp_sleep_enable_gpio_wakeup();
+        // Don't sleep if WiFi is active (OTA, companion radio WiFi mode, etc.)
+        if (WiFi.getMode() != WIFI_MODE_NULL) return false;
+        
+        // Ensure DIO pin is configured as input
+        if (radio_dio_pin >= 0) {
+            pinMode(radio_dio_pin, INPUT);
+        }
+        
+        // Clear all previous wake sources first
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
         
         // Configure radio DIO pin as wake source (active high)
         if (radio_dio_pin >= 0) {
             gpio_wakeup_enable((gpio_num_t)radio_dio_pin, GPIO_INTR_HIGH_LEVEL);
         }
+        esp_sleep_enable_gpio_wakeup();
         
         // Configure timer wake if max_sleep_ms > 0
         if (max_sleep_ms > 0) {
