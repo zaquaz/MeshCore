@@ -1,5 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/PowerManager.h>
 
 #include "MyMesh.h"
 
@@ -7,6 +8,10 @@
   #include "UITask.h"
   static UITask ui_task(display);
 #endif
+
+// Power manager for optimizing battery life
+// Tracks serial activity to avoid sleeping when connected to host (e.g., Raspberry Pi)
+static PowerManager power_manager;
 
 StdRNG fast_rng;
 SimpleMeshTables tables;
@@ -76,6 +81,9 @@ void setup() {
 
   the_mesh.begin(fs);
 
+  // Initialize power manager - will track activity to optimize power consumption
+  power_manager.begin();
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -85,8 +93,14 @@ void setup() {
 }
 
 void loop() {
+  // Update power mode based on recent activity
+  power_manager.updatePowerMode();
+
   int len = strlen(command);
   while (Serial.available() && len < sizeof(command)-1) {
+    // Serial activity detected - record it to prevent sleep
+    power_manager.recordActivity(ACTIVITY_SERIAL_RX);
+    
     char c = Serial.read();
     if (c != '\n') {
       command[len++] = c;
@@ -102,8 +116,29 @@ void loop() {
   if (len > 0 && command[len - 1] == '\r') {  // received complete line
     Serial.print('\n');
     command[len - 1] = 0;  // replace newline with C string null terminator
+    
+    // Record TX activity (response will be sent)
+    power_manager.recordActivity(ACTIVITY_SERIAL_TX);
+    
+    // Check for power management commands
     char reply[160];
-    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+    if (strncmp(command, "power", 5) == 0) {
+      // Built-in power management command
+      if (strcmp(command, "power") == 0 || strcmp(command, "power status") == 0) {
+        power_manager.formatStatsReply(reply);
+      } else if (strcmp(command, "power on") == 0) {
+        power_manager.setPowerSavingEnabled(true);
+        strcpy(reply, "power saving enabled");
+      } else if (strcmp(command, "power off") == 0) {
+        power_manager.setPowerSavingEnabled(false);
+        strcpy(reply, "power saving disabled");
+      } else {
+        strcpy(reply, "usage: power [on|off|status]");
+      }
+    } else {
+      the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+    }
+    
     if (reply[0]) {
       Serial.print("  -> "); Serial.println(reply);
     }
@@ -117,4 +152,8 @@ void loop() {
   ui_task.loop();
 #endif
   rtc_clock.tick();
+  
+  // Apply power-efficient delay based on activity level
+  // When idle and no serial activity, this allows CPU to enter low-power states
+  power_manager.applyLoopDelay();
 }
