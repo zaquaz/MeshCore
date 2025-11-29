@@ -476,19 +476,21 @@ public:
         // Don't sleep if WiFi is active (OTA, companion radio WiFi mode, etc.)
         if (WiFi.getMode() != WIFI_MODE_NULL) return false;
         
-        // Ensure DIO pin is configured as input
-        if (radio_dio_pin >= 0) {
-            pinMode(radio_dio_pin, INPUT);
-        }
-        
         // Clear all previous wake sources first
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
         
-        // Configure radio DIO pin as wake source (active high)
+        // Configure radio DIO pin as wake source
+        // Use ext0 on ESP32/S2/S3 to handle SX1262 multiple high
         if (radio_dio_pin >= 0) {
+#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6)
+            // ESP32-C3/C6: Use GPIO wakeup (only option available)
             gpio_wakeup_enable((gpio_num_t)radio_dio_pin, GPIO_INTR_HIGH_LEVEL);
+            esp_sleep_enable_gpio_wakeup();
+#else
+            // ESP32/S2/S3: Use ext0 for better handling of SX1262
+            esp_sleep_enable_ext0_wakeup((gpio_num_t)radio_dio_pin, 1);  // 1 = wake on HIGH
+#endif
         }
-        esp_sleep_enable_gpio_wakeup();
         
         // Configure timer wake if max_sleep_ms > 0
         if (max_sleep_ms > 0) {
