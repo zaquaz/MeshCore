@@ -166,6 +166,11 @@ void loop() {
 #endif
   rtc_clock.tick();
   
+  // Keep awake if mesh has pending work (packets to forward, etc.)
+  if (the_mesh.hasPendingOutbound()) {
+    power_manager.recordActivity(ACTIVITY_RADIO_TX);
+  }
+  
   // Apply power-efficient delay based on activity level
   // On NRF52: Uses System ON sleep in LOW_POWER mode (wakes on radio interrupt)
   // On ESP32: Uses light sleep with GPIO wake on radio DIO1 interrupt + timer for clock sync

@@ -2,11 +2,7 @@
 
 #include <Arduino.h>
 
-// NRF5// Default timeouts (milliseconds)
-#define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
-#define IDLE_TIMEOUT_MS               500   // 5 milliseconds before entering idle mode
-#define LOW_POWER_TIMEOUT_MS          20     // 20 milliseconds before entering low power mode
-#define MAX_SLEEP_DURATION_MS         5000    // 1000 milliseconds (1 second) maximum sleep durationftDevice includes for sleep functions
+// NRF52 includes for sleep functions
 #ifdef NRF52_PLATFORM
   #include <nrf_sdm.h>
   #include <nrf_soc.h>
@@ -16,6 +12,7 @@
 #ifdef ESP32
   #include <esp_sleep.h>
   #include <driver/gpio.h>
+  #include <driver/rtc_io.h>
   #include <WiFi.h>
 #endif
 
@@ -30,7 +27,36 @@
  * - Optional light sleep support (ESP32) with interrupt wake
  * - Safe defaults - power saving only when safe to do so
  * 
+ * Configurable Parameters (at top of file):
+ * - IDLE_TIMEOUT_MS: Time after last activity before entering IDLE mode
+ * - LOW_POWER_TIMEOUT_MS: Time after last activity before entering LOW_POWER mode
+ * - MAX_SLEEP_DURATION_MS: Maximum light sleep duration (for time accuracy)
  */
+
+// ==================== CONFIGURABLE TIMEOUTS ====================
+// Adjust these values to tune power saving behavior
+//
+// For stable low power on Heltec V4:
+// - Use longer sleep with radio DIO1 wake (ext0 wakeup)
+// - Radio stays in RX mode during light sleep
+// - DIO1 goes HIGH on packet receive, waking the CPU instantly
+// - Timer wake ensures millis()/RTC stays accurate
+
+#define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
+#define IDLE_TIMEOUT_MS               50     // 50ms after last activity -> IDLE mode
+#define LOW_POWER_TIMEOUT_MS          200    // 200ms after last activity -> LOW_POWER mode
+
+// Maximum sleep duration between timer wakes (radio wake is instant)
+// Longer = more power savings, but millis() drifts slightly
+// 10 seconds is a good balance for repeaters
+#define MAX_SLEEP_DURATION_MS         10000   // 10 seconds max sleep
+
+// Loop delays for each power mode (used when NOT entering light sleep)
+#define ACTIVE_LOOP_DELAY_MS          0       // No delay when active
+#define IDLE_LOOP_DELAY_MS            10      // Small delay in idle
+#define LOW_POWER_LOOP_DELAY_MS       30      // Delay before sleep attempt
+
+// ==================== END CONFIGURABLE SECTION ====================
 
 // Power modes
 #define POWER_MODE_ACTIVE      0   // Full speed, no delays
@@ -44,16 +70,6 @@
 #define ACTIVITY_RADIO_TX      (1 << 3)
 #define ACTIVITY_USER_INPUT    (1 << 4)
 #define ACTIVITY_CRYPTO        (1 << 5)   // Key exchange, signature verification
-
-// Default timeouts (milliseconds)
-#define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
-#define IDLE_TIMEOUT_MS               100       // 100 milliseconds before entering idle mode
-#define LOW_POWER_TIMEOUT_MS          20      // 20 milliseconds before entering low power mode
-
-// Loop delays for each power mode
-#define ACTIVE_LOOP_DELAY_MS          0       // No delay when active
-#define IDLE_LOOP_DELAY_MS            300       // 300ms delay in idle
-#define LOW_POWER_LOOP_DELAY_MS       5000      // 500ms delay in low power
 
 // CPU frequency settings (ESP32 only)
 // Radio/SPI work fine at 80MHz, crypto benefits from higher speed
@@ -522,6 +538,9 @@ public:
      * 
      * NOTE: Will NOT sleep if WiFi is active (e.g., OTA mode, WiFi companion radio)
      * 
+     * For ESP32/S2/S3: Uses ext0 wakeup with RTC GPIO
+     * For ESP32-C3/C6: Uses GPIO wakeup (no RTC GPIO support)
+     * 
      * @param max_sleep_ms Maximum time to sleep (0 = wake on interrupt only)
      * @param radio_dio_pin GPIO pin for radio DIO1 interrupt wake
      * @return true if entered sleep, false if sleep was skipped
@@ -542,28 +561,49 @@ public:
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
         
         // Configure radio DIO pin as wake source
-        // Use ext0 on ESP32/S2/S3 to handle SX1262 multiple high
         if (radio_dio_pin >= 0) {
 #if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6)
-            // ESP32-C3/C6: Use GPIO wakeup (only option available)
-            gpio_wakeup_enable((gpio_num_t)radio_dio_pin, GPIO_INTR_HIGH_LEVEL);
-            esp_sleep_enable_gpio_wakeup();
+            // ESP32-C3/C6: Use GPIO wakeup (ext0 not available on these chips)
+            gpio_set_direction((gpio_num_t)radio_dio_pin, GPIO_MODE_INPUT);
+            gpio_pulldown_en((gpio_num_t)radio_dio_pin);
+            gpio_pullup_dis((gpio_num_t)radio_dio_pin);
+            if (gpio_wakeup_enable((gpio_num_t)radio_dio_pin, GPIO_INTR_HIGH_LEVEL) == ESP_OK) {
+                esp_sleep_enable_gpio_wakeup();
+            }
 #else
-            // ESP32/S2/S3: Use ext0 for better handling of SX1262
-            esp_sleep_enable_ext0_wakeup((gpio_num_t)radio_dio_pin, 1);  // 1 = wake on HIGH
+            // ESP32/S2/S3: Use ext0 with proper RTC GPIO init
+            // ext0 is more reliable for handling SX1262 DIO1 behavior
+            
+            // Initialize RTC GPIO function for this pin
+            rtc_gpio_init((gpio_num_t)radio_dio_pin);
+            rtc_gpio_set_direction((gpio_num_t)radio_dio_pin, RTC_GPIO_MODE_INPUT_ONLY);
+            rtc_gpio_pulldown_en((gpio_num_t)radio_dio_pin);
+            rtc_gpio_pullup_dis((gpio_num_t)radio_dio_pin);
+            
+            // Enable ext0 wakeup on HIGH level (radio DIO1 goes HIGH on packet RX)
+            esp_sleep_enable_ext0_wakeup((gpio_num_t)radio_dio_pin, 1);
 #endif
         }
         
         // Configure timer wake if max_sleep_ms > 0
         if (max_sleep_ms > 0) {
-            esp_sleep_enable_timer_wakeup(max_sleep_ms * 1000);  // Convert to microseconds
+            esp_sleep_enable_timer_wakeup(max_sleep_ms * 1000ULL);  // Convert to microseconds
         }
         
         // Enter light sleep
         _sleep_count++;
         esp_light_sleep_start();
         
-        // Woke up - record activity to reset idle timer
+        // Restore normal GPIO function after wakeup (ESP32/S2/S3 only)
+#if !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32C6)
+        if (radio_dio_pin >= 0) {
+            // Deinit RTC GPIO to restore normal digital GPIO function
+            // This is important for the radio driver to work correctly
+            rtc_gpio_deinit((gpio_num_t)radio_dio_pin);
+        }
+#endif
+        
+        // Record activity to reset idle timer
         recordActivity(ACTIVITY_RADIO_RX);  // Assume woke due to radio
         
         return true;
