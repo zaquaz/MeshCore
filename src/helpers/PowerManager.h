@@ -2,7 +2,11 @@
 
 #include <Arduino.h>
 
-// NRF52 SoftDevice includes for sleep functions
+// NRF5// Default timeouts (milliseconds)
+#define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
+#define IDLE_TIMEOUT_MS               500   // 5 milliseconds before entering idle mode
+#define LOW_POWER_TIMEOUT_MS          20     // 20 milliseconds before entering low power mode
+#define MAX_SLEEP_DURATION_MS         5000    // 1000 milliseconds (1 second) maximum sleep durationftDevice includes for sleep functions
 #ifdef NRF52_PLATFORM
   #include <nrf_sdm.h>
   #include <nrf_soc.h>
@@ -26,10 +30,6 @@
  * - Optional light sleep support (ESP32) with interrupt wake
  * - Safe defaults - power saving only when safe to do so
  * 
- * Clock Skew Note:
- * - ESP32 light sleep: millis() continues via hardware timer
- * - NRF52 System ON sleep: millis() continues via RTC peripheral
- * - No clock drift concerns for these sleep modes
  */
 
 // Power modes
@@ -47,13 +47,13 @@
 
 // Default timeouts (milliseconds)
 #define SERIAL_ACTIVITY_TIMEOUT_MS    30000   // 30 seconds - assume connected if recent serial activity
-#define IDLE_TIMEOUT_MS               10000   // 10 seconds before entering idle mode
-#define LOW_POWER_TIMEOUT_MS          60000   // 60 seconds before entering low power mode
+#define IDLE_TIMEOUT_MS               100       // 100 milliseconds before entering idle mode
+#define LOW_POWER_TIMEOUT_MS          20      // 20 milliseconds before entering low power mode
 
 // Loop delays for each power mode
 #define ACTIVE_LOOP_DELAY_MS          0       // No delay when active
-#define IDLE_LOOP_DELAY_MS            5       // 5ms delay in idle
-#define LOW_POWER_LOOP_DELAY_MS       20      // 20ms delay in low power
+#define IDLE_LOOP_DELAY_MS            300       // 300ms delay in idle
+#define LOW_POWER_LOOP_DELAY_MS       5000      // 500ms delay in low power
 
 // CPU frequency settings (ESP32 only)
 // Radio/SPI work fine at 80MHz, crypto benefits from higher speed
@@ -72,6 +72,11 @@ private:
     uint8_t _current_mode;
     bool _power_saving_enabled;
     bool _serial_connected_override;  // Force assume serial connected (for debugging)
+    bool _serial_check_disabled;      // Disable serial activity check (allows sleep even with serial)
+    
+    // Configurable sleep parameters
+    uint32_t _low_power_timeout_ms;   // Timeout before entering LOW_POWER mode
+    uint32_t _max_sleep_duration_ms;  // Max sleep duration before timer wake
     
     // Callback to check for pending TX packets before sleeping
     HasPendingOutboundFn _has_pending_outbound;
@@ -96,6 +101,9 @@ public:
         _current_mode = POWER_MODE_ACTIVE;
         _power_saving_enabled = false;  // SAFE DEFAULT - must be explicitly enabled via prefs
         _serial_connected_override = false;
+        _serial_check_disabled = false;
+        _low_power_timeout_ms = LOW_POWER_TIMEOUT_MS;
+        _max_sleep_duration_ms = MAX_SLEEP_DURATION_MS;  // Default 1000ms (1 second) sleep duration for time accuracy
         _has_pending_outbound = nullptr;
         _cpu_scaling_enabled = true;
         _current_cpu_freq = CPU_FREQ_ACTIVE;
@@ -145,6 +153,7 @@ public:
      * Used to prevent sleep when device is connected to a host like Raspberry Pi
      */
     bool isSerialActive() const {
+        if (_serial_check_disabled) return false;  // Serial check disabled - allow sleep
         if (_serial_connected_override) return true;
         
         unsigned long now = millis();
@@ -221,9 +230,14 @@ public:
      * Call at end of main loop instead of applyLoopDelay() for maximum power savings
      * 
      * @param radio_dio_pin GPIO pin for radio DIO1 interrupt wake (ESP32 only, -1 to disable)
-     * @param max_sleep_ms Maximum sleep time in ms (0 = wake on interrupt only)
+     * @param max_sleep_ms Maximum sleep time in ms (0 = wake on interrupt only, -1 = use member variable)
      */
-    void applyPowerSaving(int radio_dio_pin = -1, uint32_t max_sleep_ms = 100) {
+    void applyPowerSaving(int radio_dio_pin = -1, int32_t max_sleep_ms = -1) {
+        // Use constant default if not specified
+        if (max_sleep_ms < 0) {
+            max_sleep_ms = MAX_SLEEP_DURATION_MS;
+        }
+        
         if (_current_mode == POWER_MODE_LOW_POWER && _power_saving_enabled && !isSerialActive()) {
             // Enter actual sleep mode
 #ifdef ESP32
@@ -370,6 +384,19 @@ public:
     }
     
     /**
+     * Lock CPU to lower frequency (most aggressive power saving for repeaters)
+     * Disables frequency scaling and sets CPU to low power frequency
+     * Useful for repeater-only devices that don't need higher speeds
+     */
+    void lockCpuLower() {
+#ifdef ESP32
+        _cpu_scaling_enabled = false;  // Disable scaling
+        setCpuFrequencyMhz(CPU_FREQ_LOW_POWER);  // Lock at 80MHz
+        _current_cpu_freq = CPU_FREQ_LOW_POWER;
+#endif
+    }
+    
+    /**
      * Enable/disable power saving
      * When disabled, CPU frequency is restored to active level
      */
@@ -396,6 +423,41 @@ public:
      */
     void setSerialConnectedOverride(bool connected) {
         _serial_connected_override = connected;
+    }
+    
+    /**
+     * Disable/enable serial activity check for power saving
+     * When disabled, device can sleep even if serial appears connected
+     * Useful if power adapter is detected as a serial device
+     */
+    void setSerialCheckDisabled(bool disabled) {
+        _serial_check_disabled = disabled;
+    }
+    
+    bool isSerialCheckDisabled() const {
+        return _serial_check_disabled;
+    }
+    
+    /**
+     * Set LOW_POWER mode timeout (milliseconds after last activity)
+     */
+    void setLowPowerTimeout(uint32_t timeout_ms) {
+        _low_power_timeout_ms = timeout_ms;
+    }
+    
+    uint32_t getLowPowerTimeout() const {
+        return _low_power_timeout_ms;
+    }
+    
+    /**
+     * Set maximum sleep duration before timer wake (milliseconds)
+     */
+    void setMaxSleepDuration(uint32_t duration_ms) {
+        _max_sleep_duration_ms = duration_ms;
+    }
+    
+    uint32_t getMaxSleepDuration() const {
+        return _max_sleep_duration_ms;
     }
     
     /**

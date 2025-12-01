@@ -48,7 +48,9 @@ struct NodePrefs { // persisted to file
   uint8_t advert_loc_policy;
   uint32_t discovery_mod_timestamp;
   // Power management settings
-  uint8_t power_saving_enabled; // boolean - enable/disable power saving mode
+  uint8_t power_saving_enabled;     // boolean - enable/disable power saving mode
+  uint8_t serial_check_disabled;    // boolean - disable serial activity check (allow sleep with serial)
+  uint8_t cpu_locked_lower;         // boolean - lock CPU to lower frequency (aggressive power saving for repeaters)
 };
 
 class CommonCLICallbacks {
@@ -98,6 +100,18 @@ public:
   };
 
   virtual void resetPowerStats() {
+    // no op by default - override in implementations that support power management
+  };
+
+  virtual void setSerialCheckDisabled(bool disabled) {
+    // no op by default - override in implementations that support power management
+  };
+
+  virtual void lockCpuLower() {
+    // no op by default - override in implementations that support power management
+  };
+
+  virtual void setCpuScalingEnabled(bool enabled) {
     // no op by default - override in implementations that support power management
   };
 };

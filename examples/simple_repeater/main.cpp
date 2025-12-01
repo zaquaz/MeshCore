@@ -99,6 +99,15 @@ void setup() {
     power_manager.setPowerSavingEnabled(false);
     MESH_DEBUG_PRINTLN("Power saving: disabled");
   }
+  
+  // Restore serial check state from persistent preferences
+  if (prefs->serial_check_disabled) {
+    power_manager.setSerialCheckDisabled(true);
+    MESH_DEBUG_PRINTLN("Serial check: disabled (from prefs)");
+  } else {
+    power_manager.setSerialCheckDisabled(false);
+    MESH_DEBUG_PRINTLN("Serial check: enabled");
+  }
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
@@ -114,8 +123,10 @@ void loop() {
 
   int len = strlen(command);
   while (Serial.available() && len < sizeof(command)-1) {
-    // Serial activity detected - record it to prevent sleep
-    power_manager.recordActivity(ACTIVITY_SERIAL_RX);
+    // Serial activity detected - record it to prevent sleep (unless serial check is disabled)
+    if (!power_manager.isSerialCheckDisabled()) {
+      power_manager.recordActivity(ACTIVITY_SERIAL_RX);
+    }
     
     char c = Serial.read();
     if (c != '\n') {
@@ -133,8 +144,10 @@ void loop() {
     Serial.print('\n');
     command[len - 1] = 0;  // replace newline with C string null terminator
     
-    // Record TX activity (response will be sent)
-    power_manager.recordActivity(ACTIVITY_SERIAL_TX);
+    // Record TX activity (response will be sent) - unless serial check is disabled
+    if (!power_manager.isSerialCheckDisabled()) {
+      power_manager.recordActivity(ACTIVITY_SERIAL_TX);
+    }
     
     char reply[160];
     the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
@@ -155,12 +168,12 @@ void loop() {
   
   // Apply power-efficient delay based on activity level
   // On NRF52: Uses System ON sleep in LOW_POWER mode (wakes on radio interrupt)
-  // On ESP32: Uses light sleep with GPIO wake on radio DIO1 interrupt
+  // On ESP32: Uses light sleep with GPIO wake on radio DIO1 interrupt + timer for clock sync
   // When serial is active (e.g., connected to Raspberry Pi), stays in ACTIVE mode
 #ifdef NRF52_PLATFORM
   power_manager.applyPowerSaving();  // Uses System ON sleep on NRF52
 #elif defined(ESP32) && defined(P_LORA_DIO_1)
-  power_manager.applyPowerSaving(P_LORA_DIO_1, 100);  // Light sleep with radio wake, max 100ms
+  power_manager.applyPowerSaving(P_LORA_DIO_1, power_manager.getMaxSleepDuration());  // Use configurable sleep duration
 #else
   power_manager.applyLoopDelay();    // Conservative delay-based fallback
 #endif
