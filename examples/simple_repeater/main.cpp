@@ -1,6 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
-#include <helpers/PowerManager.h>
+#include <helpers/PowerManagerIntegration.h>
 
 #include "MyMesh.h"
 
@@ -8,10 +8,6 @@
   #include "UITask.h"
   static UITask ui_task(display);
 #endif
-
-// Power manager for optimizing battery life
-// Tracks serial activity to avoid sleeping when connected to host (e.g., Raspberry Pi)
-static PowerManager power_manager;
 
 StdRNG fast_rng;
 SimpleMeshTables tables;
@@ -81,33 +77,11 @@ void setup() {
 
   the_mesh.begin(fs);
 
-  // Initialize power manager and wire it up to the mesh for remote commands
-  power_manager.begin();
-  the_mesh.setPowerManager(&power_manager);
-  
-  // Set callback to check for pending outbound packets before sleeping
-  power_manager.setHasPendingOutboundCallback([]() -> bool {
-    return the_mesh.hasPendingOutbound();
+  // Initialize power manager with mesh integration
+  // Pass a static function to check for pending outbound packets
+  initPowerManager(the_mesh, the_mesh.getNodePrefs(), []() -> bool {
+      return the_mesh.hasPendingOutbound();
   });
-  
-  // Restore power saving state from persistent preferences
-  NodePrefs* prefs = the_mesh.getNodePrefs();
-  if (prefs->power_saving_enabled) {
-    power_manager.setPowerSavingEnabled(true);
-    MESH_DEBUG_PRINTLN("Power saving: enabled (from prefs)");
-  } else {
-    power_manager.setPowerSavingEnabled(false);
-    MESH_DEBUG_PRINTLN("Power saving: disabled");
-  }
-  
-  // Restore serial check state from persistent preferences
-  if (prefs->serial_check_disabled) {
-    power_manager.setSerialCheckDisabled(true);
-    MESH_DEBUG_PRINTLN("Serial check: disabled (from prefs)");
-  } else {
-    power_manager.setSerialCheckDisabled(false);
-    MESH_DEBUG_PRINTLN("Serial check: enabled");
-  }
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
@@ -119,14 +93,12 @@ void setup() {
 
 void loop() {
   // Update power mode based on recent activity
-  power_manager.updatePowerMode();
+  powerManagerLoopStart();
 
   int len = strlen(command);
   while (Serial.available() && len < sizeof(command)-1) {
     // Serial activity detected - record it to prevent sleep (unless serial check is disabled)
-    if (!power_manager.isSerialCheckDisabled()) {
-      power_manager.recordActivity(ACTIVITY_SERIAL_RX);
-    }
+    recordSerialActivity(ACTIVITY_SERIAL_RX);
     
     char c = Serial.read();
     if (c != '\n') {
@@ -145,9 +117,7 @@ void loop() {
     command[len - 1] = 0;  // replace newline with C string null terminator
     
     // Record TX activity (response will be sent) - unless serial check is disabled
-    if (!power_manager.isSerialCheckDisabled()) {
-      power_manager.recordActivity(ACTIVITY_SERIAL_TX);
-    }
+    recordSerialActivity(ACTIVITY_SERIAL_TX);
     
     char reply[160];
     the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
@@ -168,18 +138,9 @@ void loop() {
   
   // Keep awake if mesh has pending work (packets to forward, etc.)
   if (the_mesh.hasPendingOutbound()) {
-    power_manager.recordActivity(ACTIVITY_RADIO_TX);
+    recordActivity(ACTIVITY_RADIO_TX);
   }
   
   // Apply power-efficient delay based on activity level
-  // On NRF52: Uses System ON sleep in LOW_POWER mode (wakes on radio interrupt)
-  // On ESP32: Uses light sleep with GPIO wake on radio DIO1 interrupt + timer for clock sync
-  // When serial is active (e.g., connected to Raspberry Pi), stays in ACTIVE mode
-#ifdef NRF52_PLATFORM
-  power_manager.applyPowerSaving();  // Uses System ON sleep on NRF52
-#elif defined(ESP32) && defined(P_LORA_DIO_1)
-  power_manager.applyPowerSaving(P_LORA_DIO_1, power_manager.getMaxSleepDuration());  // Use configurable sleep duration
-#else
-  power_manager.applyLoopDelay();    // Conservative delay-based fallback
-#endif
+  powerManagerLoopEnd();
 }

@@ -80,7 +80,7 @@ struct NeighbourInfo {
 
 #define PACKET_LOG_FILE  "/packet_log"
 
-class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+class MyMesh : public mesh::Mesh, public CommonCLICallbacks, public PowerManagerCallbacks {
   FILESYSTEM* _fs;
   uint32_t last_millis;
   uint64_t uptime_millis;
@@ -97,7 +97,6 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   RateLimiter discover_limiter;
   bool region_load_active;
   unsigned long dirty_contacts_expiry;
-  PowerManager* _power_manager;  // optional - for power management callbacks
 #if MAX_NEIGHBOURS
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -168,9 +167,6 @@ public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
   void begin(FILESYSTEM* fs);
-  
-  // Set the power manager for remote power commands
-  void setPowerManager(PowerManager* pm) { _power_manager = pm; }
 
   const char* getFirmwareVer() override { return FIRMWARE_VERSION; }
   const char* getBuildDate() override { return FIRMWARE_BUILD_DATE; }
@@ -230,31 +226,6 @@ public:
     bridge.begin();
   }
 #endif
-
-  // Power management callbacks (for remote LoRa commands)
-  void setPowerSavingEnabled(bool enable) override {
-    if (_power_manager) {
-      _power_manager->setPowerSavingEnabled(enable);
-    }
-  }
-
-  bool getPowerSavingEnabled() override {
-    return _power_manager ? _power_manager->isPowerSavingEnabled() : false;
-  }
-
-  void formatPowerStatsReply(char *reply) override {
-    if (_power_manager) {
-      _power_manager->formatStatsReply(reply);
-    } else {
-      strcpy(reply, "> power management not available");
-    }
-  }
-
-  void resetPowerStats() override {
-    if (_power_manager) {
-      _power_manager->resetStats();
-    }
-  }
 
   // Check if there are packets waiting to be transmitted
   // Used by PowerManager to avoid sleeping when TX is pending

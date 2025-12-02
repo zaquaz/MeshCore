@@ -72,8 +72,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.read((uint8_t *)&_prefs->power_saving_enabled, sizeof(_prefs->power_saving_enabled));     // 166
     file.read((uint8_t *)&_prefs->serial_check_disabled, sizeof(_prefs->serial_check_disabled));   // 167
-    file.read((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 168
-    // 169
+  file.read((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 168
+  file.read((uint8_t *)&_prefs->cpu_scaling_enabled, sizeof(_prefs->cpu_scaling_enabled));       // 169
+  // 170
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -107,6 +108,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     // Default cpu_locked_lower to 0 (scaling enabled) if uninitialized
     if (_prefs->cpu_locked_lower > 1) {
       _prefs->cpu_locked_lower = 0;
+    }
+    if (_prefs->cpu_scaling_enabled > 1) {
+      _prefs->cpu_scaling_enabled = 0;
     }
 
     file.close();
@@ -164,9 +168,10 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->advert_loc_policy, sizeof(_prefs->advert_loc_policy));           // 161
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->power_saving_enabled, sizeof(_prefs->power_saving_enabled));     // 166
-    file.write((uint8_t *)&_prefs->serial_check_disabled, sizeof(_prefs->serial_check_disabled));   // 167
-    file.write((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 168
-    // 169
+  file.write((uint8_t *)&_prefs->serial_check_disabled, sizeof(_prefs->serial_check_disabled));   // 167
+  file.write((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 168
+  file.write((uint8_t *)&_prefs->cpu_scaling_enabled, sizeof(_prefs->cpu_scaling_enabled));       // 169
+  // 170
 
     file.close();
   }
@@ -349,6 +354,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       } else if (memcmp(config, "bridge.secret", 13) == 0) {
         sprintf(reply, "> %s", _prefs->bridge_secret);
 #endif
+      } else if (memcmp(config, "cpu_scaling", 11) == 0) {
+        sprintf(reply, "> %s", _prefs->cpu_scaling_enabled ? "on" : "off");
       } else if (memcmp(config, "power", 5) == 0) {
         if (config[5] == 0 || config[5] == ' ') {
           // "get power" - return current state and stats
@@ -580,6 +587,21 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           strcpy(reply, "OK - serial check disabled");
         } else {
           strcpy(reply, "Error: use 'set serial_check on|off'");
+        }
+      } else if (memcmp(config, "cpu_scaling ", 12) == 0) {
+        const char* val = &config[12];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->cpu_scaling_enabled = 1;
+          _callbacks->setCpuScalingEnabled(true);
+          savePrefs();
+          strcpy(reply, "OK - CPU scaling enabled");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->cpu_scaling_enabled = 0;
+          _callbacks->setCpuScalingEnabled(false);
+          savePrefs();
+          strcpy(reply, "OK - CPU scaling disabled");
+        } else {
+          strcpy(reply, "Error: use 'set cpu_scaling on|off'");
         }
       } else if (memcmp(config, "cpu_locked_lower ", 17) == 0) {
         const char* val = &config[17];
