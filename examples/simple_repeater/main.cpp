@@ -78,10 +78,7 @@ void setup() {
   the_mesh.begin(fs);
 
   // Initialize power manager with mesh integration
-  // Pass a static function to check for pending outbound packets
-  initPowerManager(the_mesh, the_mesh.getNodePrefs(), []() -> bool {
-      return the_mesh.hasPendingOutbound();
-  });
+  initPowerManager(the_mesh, the_mesh.getNodePrefs());
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
