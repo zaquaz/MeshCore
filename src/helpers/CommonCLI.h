@@ -47,6 +47,7 @@ struct NodePrefs { // persisted to file
   uint32_t gps_interval; // in seconds
   uint8_t advert_loc_policy;
   uint32_t discovery_mod_timestamp;
+  float adc_multiplier;
   // Power management settings
   uint8_t power_saving_enabled;     // boolean - enable/disable power saving mode
   uint8_t serial_check_disabled;    // boolean - disable serial activity check (allow sleep with serial)

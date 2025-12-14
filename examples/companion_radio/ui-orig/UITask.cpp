@@ -137,9 +137,13 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   StrHelper::strncpy(_msg, text, sizeof(_msg));
 
   if (_display != NULL) {
-    if (!_display->isOn()) _display->turnOn();
+    if (!_display->isOn() && !hasConnection()) {
+      _display->turnOn();
+    }
+    if (_display->isOn()) {
     _auto_off = millis() + AUTO_OFF_MILLIS;  // extend the auto-off timer
     _need_refresh = true;
+    }
   }
 }
 
@@ -270,7 +274,7 @@ void UITask::userLedHandler() {
       state = 0;
       next_change = cur_time + LED_CYCLE_MILLIS - last_increment;
     }
-    digitalWrite(PIN_STATUS_LED, state);
+    digitalWrite(PIN_STATUS_LED, state == LED_STATE_ON);
   }
 #endif
 }
@@ -293,10 +297,12 @@ void UITask::shutdown(bool restart){
 
   #endif // PIN_BUZZER
 
-  if (restart)
+  if (restart) {
     _board->reboot();
-  else
+  } else {
+    radio_driver.powerOff();
     _board->powerOff();
+  }
 }
 
 void UITask::loop() {
