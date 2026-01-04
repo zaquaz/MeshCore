@@ -70,8 +70,12 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->gps_interval, sizeof(_prefs->gps_interval));                     // 157
     file.read((uint8_t *)&_prefs->advert_loc_policy, sizeof (_prefs->advert_loc_policy));          // 161
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
-    file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier)); // 166
-    // 170
+    file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
+    file.read((uint8_t *)&_prefs->power_saving_enabled, sizeof(_prefs->power_saving_enabled));     // 170
+    file.read((uint8_t *)&_prefs->serial_check_disabled, sizeof(_prefs->serial_check_disabled));   // 171
+    file.read((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 172
+    file.read((uint8_t *)&_prefs->cpu_scaling_enabled, sizeof(_prefs->cpu_scaling_enabled));       // 173
+    // 174
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -95,6 +99,21 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
+    _prefs->power_saving_enabled = constrain(_prefs->power_saving_enabled, 0, 1);
+    
+    // Default serial_check_disabled to 0 (check enabled) if uninitialized
+    // This handles migration from old firmware that didn't have this field
+    if (_prefs->serial_check_disabled > 1) {
+      _prefs->serial_check_disabled = 0;
+    }
+    
+    // Default cpu_locked_lower to 0 (scaling enabled) if uninitialized
+    if (_prefs->cpu_locked_lower > 1) {
+      _prefs->cpu_locked_lower = 0;
+    }
+    if (_prefs->cpu_scaling_enabled > 1) {
+      _prefs->cpu_scaling_enabled = 0;
+    }
 
     file.close();
   }
@@ -151,9 +170,13 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->advert_loc_policy, sizeof(_prefs->advert_loc_policy));           // 161
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
-    // 170
+    file.write((uint8_t *)&_prefs->power_saving_enabled, sizeof(_prefs->power_saving_enabled));     // 170
+    file.write((uint8_t *)&_prefs->serial_check_disabled, sizeof(_prefs->serial_check_disabled));   // 171
+    file.write((uint8_t *)&_prefs->cpu_locked_lower, sizeof(_prefs->cpu_locked_lower));             // 172
+    file.write((uint8_t *)&_prefs->cpu_scaling_enabled, sizeof(_prefs->cpu_scaling_enabled));       // 173
+    // 174
 
-    file.close();
+    file.close();;
   }
 }
 
@@ -340,6 +363,15 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           strcpy(reply, "Error: unsupported by this board");
         } else {
           sprintf(reply, "> %.3f", adc_mult);
+        }
+      } else if (memcmp(config, "cpu_scaling", 11) == 0) {
+        sprintf(reply, "> %s", _prefs->cpu_scaling_enabled ? "on" : "off");
+      } else if (memcmp(config, "power", 5) == 0) {
+        if (config[5] == 0 || config[5] == ' ') {
+          // "get power" - return current state and stats
+          _callbacks->formatPowerStatsReply(reply);
+        } else {
+          sprintf(reply, "??: %s", config);
         }
       } else {
         sprintf(reply, "??: %s", config);
@@ -546,6 +578,69 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           _prefs->adc_multiplier = 0.0f;
           strcpy(reply, "Error: unsupported by this board");
         };
+      } else if (memcmp(config, "power ", 6) == 0) {
+        const char* val = &config[6];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->power_saving_enabled = 1;
+          _callbacks->setPowerSavingEnabled(true);
+          savePrefs();
+          strcpy(reply, "OK - power saving enabled");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->power_saving_enabled = 0;
+          _callbacks->setPowerSavingEnabled(false);
+          savePrefs();
+          strcpy(reply, "OK - power saving disabled");
+        } else if (memcmp(val, "reset", 5) == 0) {
+          _callbacks->resetPowerStats();
+          strcpy(reply, "OK - power stats reset");
+        } else {
+          strcpy(reply, "Error: use 'set power on|off|reset'");
+        }
+      } else if (memcmp(config, "serial_check ", 13) == 0) {
+        const char* val = &config[13];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->serial_check_disabled = 0;
+          _callbacks->setSerialCheckDisabled(false);
+          savePrefs();
+          strcpy(reply, "OK - serial check enabled");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->serial_check_disabled = 1;
+          _callbacks->setSerialCheckDisabled(true);
+          savePrefs();
+          strcpy(reply, "OK - serial check disabled");
+        } else {
+          strcpy(reply, "Error: use 'set serial_check on|off'");
+        }
+      } else if (memcmp(config, "cpu_scaling ", 12) == 0) {
+        const char* val = &config[12];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->cpu_scaling_enabled = 1;
+          _callbacks->setCpuScalingEnabled(true);
+          savePrefs();
+          strcpy(reply, "OK - CPU scaling enabled");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->cpu_scaling_enabled = 0;
+          _callbacks->setCpuScalingEnabled(false);
+          savePrefs();
+          strcpy(reply, "OK - CPU scaling disabled");
+        } else {
+          strcpy(reply, "Error: use 'set cpu_scaling on|off'");
+        }
+      } else if (memcmp(config, "cpu_locked_lower ", 17) == 0) {
+        const char* val = &config[17];
+        if (memcmp(val, "on", 2) == 0) {
+          _prefs->cpu_locked_lower = 1;
+          _callbacks->lockCpuLower();
+          savePrefs();
+          strcpy(reply, "OK - CPU locked at lower frequency");
+        } else if (memcmp(val, "off", 3) == 0) {
+          _prefs->cpu_locked_lower = 0;
+          _callbacks->setCpuScalingEnabled(true);
+          savePrefs();
+          strcpy(reply, "OK - CPU frequency scaling enabled");
+        } else {
+          strcpy(reply, "Error: use 'set cpu_locked_lower on|off'");
+        }
       } else {
         sprintf(reply, "unknown config: %s", config);
       }

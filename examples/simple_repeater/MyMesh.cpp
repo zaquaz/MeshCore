@@ -676,6 +676,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   set_radio_at = revert_radio_at = 0;
   _logging = false;
   region_load_active = false;
+  _power_manager = nullptr;  // set via setPowerManager() after begin()
 
 #if MAX_NEIGHBOURS
   memset(neighbours, 0, sizeof(neighbours));

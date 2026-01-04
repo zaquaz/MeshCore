@@ -28,6 +28,7 @@
 #include <helpers/ClientACL.h>
 #include <helpers/CommonCLI.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/PowerManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/StatsFormatHelper.h>
@@ -68,18 +69,18 @@ struct NeighbourInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "13 Nov 2025"
+  #define FIRMWARE_BUILD_DATE   "30 Nov 2025"
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION   "v1.10.0"
+  #define FIRMWARE_VERSION   "v1.11.0"
 #endif
 
 #define FIRMWARE_ROLE "repeater"
 
 #define PACKET_LOG_FILE  "/packet_log"
 
-class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+class MyMesh : public mesh::Mesh, public CommonCLICallbacks, public PowerManagerCallbacks {
   FILESYSTEM* _fs;
   uint32_t last_millis;
   uint64_t uptime_millis;
@@ -225,4 +226,10 @@ public:
     bridge.begin();
   }
 #endif
+
+  // Check if there are packets waiting to be transmitted
+  // Used by PowerManager to avoid sleeping when TX is pending
+  bool hasPendingOutbound() {
+    return _mgr->getOutboundCount(millis()) > 0;
+  }
 };

@@ -1,5 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/PowerManagerIntegration.h>
 
 #include "MyMesh.h"
 
@@ -76,6 +77,9 @@ void setup() {
 
   the_mesh.begin(fs);
 
+  // Initialize power manager with mesh integration
+  initPowerManager(the_mesh, the_mesh.getNodePrefs());
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -85,8 +89,14 @@ void setup() {
 }
 
 void loop() {
+  // Update power mode based on recent activity
+  powerManagerLoopStart();
+
   int len = strlen(command);
   while (Serial.available() && len < sizeof(command)-1) {
+    // Serial activity detected - record it to prevent sleep (unless serial check is disabled)
+    recordSerialActivity(ACTIVITY_SERIAL_RX);
+    
     char c = Serial.read();
     if (c != '\n') {
       command[len++] = c;
@@ -102,8 +112,13 @@ void loop() {
   if (len > 0 && command[len - 1] == '\r') {  // received complete line
     Serial.print('\n');
     command[len - 1] = 0;  // replace newline with C string null terminator
+    
+    // Record TX activity (response will be sent) - unless serial check is disabled
+    recordSerialActivity(ACTIVITY_SERIAL_TX);
+    
     char reply[160];
     the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+    
     if (reply[0]) {
       Serial.print("  -> "); Serial.println(reply);
     }
@@ -117,4 +132,12 @@ void loop() {
   ui_task.loop();
 #endif
   rtc_clock.tick();
+  
+  // Keep awake if mesh has pending work (packets to forward, etc.)
+  if (the_mesh.hasPendingOutbound()) {
+    recordActivity(ACTIVITY_RADIO_TX);
+  }
+  
+  // Apply power-efficient delay based on activity level
+  powerManagerLoopEnd();
 }
